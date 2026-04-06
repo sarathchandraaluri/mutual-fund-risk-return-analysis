@@ -6,21 +6,33 @@ from datetime import timedelta
 
 st.set_page_config(page_title="Mutual Fund Tool", layout="wide")
 
-st.title("📊 Mutual Fund Analytics & Portfolio Tool")
+st.title("📊 Mutual Fund Analytics & Portfolio Optimization Tool")
 
 # -----------------------------
-# FETCH FUND LIST
+# FETCH FUND LIST (SAFE + CACHED)
 # -----------------------------
 @st.cache_data
 def get_fund_list():
     url = "https://api.mfapi.in/mf"
-    data = requests.get(url).json()
-    return pd.DataFrame(data)
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            df = pd.DataFrame(response.json())
+            return df.head(200)  # limit for speed
+        else:
+            return pd.DataFrame()
+    except:
+        return pd.DataFrame()
 
 fund_df = get_fund_list()
 
+if fund_df.empty:
+    st.error("Unable to load fund list. Please refresh.")
+    st.stop()
+
 # -----------------------------
-# MULTI SELECT FUNDS
+# FUND SELECTION
 # -----------------------------
 selected_funds = st.multiselect(
     "Select Mutual Funds",
@@ -38,57 +50,75 @@ timeframe = st.selectbox(
 results = []
 
 # -----------------------------
-# PROCESS EACH FUND
+# PROCESS FUNDS
 # -----------------------------
 for fund in selected_funds:
 
     scheme_code = fund_df[fund_df['schemeName'] == fund]['schemeCode'].values[0]
 
     url = f"https://api.mfapi.in/mf/{scheme_code}"
-    data = requests.get(url).json()
 
-    df = pd.DataFrame(data['data'])
+    try:
+        response = requests.get(url, timeout=10)
 
-    df['nav'] = pd.to_numeric(df['nav'], errors='coerce')
-    df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
+        if response.status_code != 200:
+            st.warning(f"Failed to fetch data for {fund}")
+            continue
 
-    df = df.dropna().sort_values("date")
+        data = response.json()
 
-    # -----------------------------
-    # TIME FILTER
-    # -----------------------------
-    today = df['date'].max()
+        if 'data' not in data:
+            continue
 
-    if timeframe == "3 Months":
-        cutoff = today - timedelta(days=90)
-    elif timeframe == "1 Year":
-        cutoff = today - timedelta(days=365)
-    elif timeframe == "2 Years":
-        cutoff = today - timedelta(days=730)
-    elif timeframe == "3 Years":
-        cutoff = today - timedelta(days=1095)
-    elif timeframe == "5 Years":
-        cutoff = today - timedelta(days=1825)
+        df = pd.DataFrame(data['data'])
 
-    df = df[df['date'] >= cutoff]
+        df['nav'] = pd.to_numeric(df['nav'], errors='coerce')
+        df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
 
-    # -----------------------------
-    # CALCULATIONS
-    # -----------------------------
-    df['returns'] = df['nav'].pct_change()
+        df = df.dropna().sort_values("date")
 
-    avg_return = df['returns'].mean() * 252
-    risk = df['returns'].std() * np.sqrt(252)
-    rf = 0.06
+        # -----------------------------
+        # TIME FILTER
+        # -----------------------------
+        today = df['date'].max()
 
-    sharpe = (avg_return - rf) / risk
+        if timeframe == "3 Months":
+            cutoff = today - timedelta(days=90)
+        elif timeframe == "1 Year":
+            cutoff = today - timedelta(days=365)
+        elif timeframe == "2 Years":
+            cutoff = today - timedelta(days=730)
+        elif timeframe == "3 Years":
+            cutoff = today - timedelta(days=1095)
+        elif timeframe == "5 Years":
+            cutoff = today - timedelta(days=1825)
 
-    results.append({
-        "Fund": fund,
-        "Return": avg_return,
-        "Risk": risk,
-        "Sharpe": sharpe
-    })
+        df = df[df['date'] >= cutoff]
+
+        if df.empty:
+            continue
+
+        # -----------------------------
+        # CALCULATIONS
+        # -----------------------------
+        df['returns'] = df['nav'].pct_change()
+
+        avg_return = df['returns'].mean() * 252
+        risk = df['returns'].std() * np.sqrt(252)
+
+        rf = 0.06
+        sharpe = (avg_return - rf) / risk if risk != 0 else 0
+
+        results.append({
+            "Fund": fund,
+            "Return": avg_return,
+            "Risk": risk,
+            "Sharpe": sharpe
+        })
+
+    except:
+        st.warning(f"Error processing {fund}")
+        continue
 
 # -----------------------------
 # DISPLAY RESULTS
@@ -114,7 +144,7 @@ if results:
     Best Fund: {best['Fund']}
 
     ✔ Sharpe Ratio: {best['Sharpe']:.2f}  
-    ✔ Better risk-adjusted return
+    ✔ Best risk-adjusted performance
     """)
 
     # -----------------------------
@@ -125,7 +155,7 @@ if results:
     sharpe_values = result_df['Sharpe'].clip(lower=0)
 
     if sharpe_values.sum() == 0:
-        weights = [1/len(sharpe_values)] * len(sharpe_values)
+        weights = [1 / len(sharpe_values)] * len(sharpe_values)
     else:
         weights = sharpe_values / sharpe_values.sum()
 
@@ -143,9 +173,9 @@ if results:
     # -----------------------------
     # VISUALIZATION
     # -----------------------------
-    st.subheader("📈 Risk vs Return Chart")
+    st.subheader("📈 Risk vs Return")
     chart_df = result_df.set_index("Fund")[["Return", "Risk"]]
     st.bar_chart(chart_df)
 
 else:
-    st.warning("Please select at least one fund")
+    st.info("Select funds to begin analysis")
