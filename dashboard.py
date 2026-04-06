@@ -14,17 +14,35 @@ st.title("📊 Mutual Fund Analytics & Portfolio Optimization Tool")
 @st.cache_data
 def get_fund_list():
     url = "https://api.mfapi.in/mf"
-    
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json())
-            return df.head(200)  # limit for speed
-        else:
-            return pd.DataFrame()
-    except:
-        return pd.DataFrame()
 
+    for attempt in range(3):  # retry 3 times
+        try:
+            response = requests.get(url, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                # Convert to DataFrame
+                df = pd.DataFrame(data)
+
+                # Reduce size (VERY IMPORTANT)
+                df = df.head(150)
+
+                return df
+
+        except:
+            continue
+
+    # FINAL FALLBACK (IMPORTANT)
+    fallback_data = [
+        {"schemeName": "Axis Bluechip Fund", "schemeCode": "120503"},
+        {"schemeName": "HDFC Top 100 Fund", "schemeCode": "118989"},
+        {"schemeName": "ICICI Prudential Bluechip Fund", "schemeCode": "119551"},
+        {"schemeName": "SBI Bluechip Fund", "schemeCode": "118834"},
+        {"schemeName": "Kotak Bluechip Fund", "schemeCode": "120828"},
+    ]
+
+    return pd.DataFrame(fallback_data)
 fund_df = get_fund_list()
 
 if fund_df.empty:
